@@ -56,10 +56,19 @@ export default async function handler(req, res) {
       ? crypto.randomUUID()
       : sha256Hex(String(Date.now()) + String(Math.random())).slice(0, 32);
 
+  res.setHeader("X-Request-Id", requestId);
+
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
     return jsonError(res, 405, "Method Not Allowed");
   }
+
+  console.info(`[tiktok][${requestId}] Incoming request`, {
+    method: req.method,
+    content_type: req.headers["content-type"],
+    body_is_object: isPlainObject(req.body),
+    body_keys: isPlainObject(req.body) ? Object.keys(req.body) : null,
+  });
 
   if (!process.env.TIKTOK_ACCESS_TOKEN) {
     console.error(`[tiktok][${requestId}] Missing TIKTOK_ACCESS_TOKEN`);
