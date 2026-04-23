@@ -6,6 +6,12 @@ const EVENT_NAME = "Lead";
 const EVENT_SOURCE = "web";
 const TEST_EVENT_CODE = "TEST69861";
 
+export const config = {
+  api: {
+    bodyParser: false,
+  },
+};
+
 function isPlainObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
@@ -50,6 +56,21 @@ function hashPhoneOrThrow(phone, requestId) {
   return sha256Hex(normalized);
 }
 
+function readRawBody(req) {
+  return new Promise((resolve, reject) => {
+    let data = "";
+    req.setEncoding("utf8");
+    req.on("data", (chunk) => {
+      data += chunk;
+      if (data.length > 1024 * 1024) {
+        reject(new Error("body_too_large"));
+      }
+    });
+    req.on("end", () => resolve(data));
+    req.on("error", reject);
+  });
+}
+
 export default async function handler(req, res) {
   const requestId =
     typeof crypto.randomUUID === "function"
@@ -63,11 +84,25 @@ export default async function handler(req, res) {
     return jsonError(res, 405, "Method Not Allowed");
   }
 
+  let body;
+  try {
+    const rawBody = await readRawBody(req);
+    if (rawBody.trim().length === 0) {
+      console.warn(`[tiktok][${requestId}] Empty body`);
+      return jsonError(res, 400, "Invalid JSON body; expected an object");
+    }
+    body = JSON.parse(rawBody);
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    console.warn(`[tiktok][${requestId}] Failed to parse JSON`, { reason });
+    return jsonError(res, 400, "Invalid JSON body; expected an object");
+  }
+
   console.info(`[tiktok][${requestId}] Incoming request`, {
     method: req.method,
     content_type: req.headers["content-type"],
-    body_is_object: isPlainObject(req.body),
-    body_keys: isPlainObject(req.body) ? Object.keys(req.body) : null,
+    body_is_object: isPlainObject(body),
+    body_keys: isPlainObject(body) ? Object.keys(body) : null,
   });
 
   if (!process.env.TIKTOK_ACCESS_TOKEN) {
@@ -75,14 +110,13 @@ export default async function handler(req, res) {
     return jsonError(res, 500, "Server misconfiguration");
   }
 
-  if (!isPlainObject(req.body)) {
+  if (!isPlainObject(body)) {
     console.warn(`[tiktok][${requestId}] Invalid JSON body shape`);
     return jsonError(res, 400, "Invalid JSON body; expected an object");
   }
 
   const eventTime = Math.floor(Date.now() / 1000);
 
-  const body = req.body;
   let payload;
 
   const isStructured =
