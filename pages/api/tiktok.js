@@ -4,7 +4,6 @@ const TIKTOK_TRACK_URL = "https://business-api.tiktok.com/open_api/v1.3/event/tr
 const PIXEL_CODE = "D7II9M3C77UEMEL8DQ40";
 const EVENT_NAME = "Lead";
 const EVENT_SOURCE = "web";
-const TEST_EVENT_CODE = "TEST69861";
 
 export const config = {
   api: {
@@ -191,9 +190,6 @@ export default async function handler(req, res) {
       ...(validateNonEmptyString(body.event) ? { event: body.event.trim() } : {}),
       event_source: body.event_source.trim(),
       event_source_id: body.event_source_id.trim(),
-      test_event_code: validateNonEmptyString(body.test_event_code)
-        ? body.test_event_code.trim()
-        : TEST_EVENT_CODE,
       data: normalizedData,
     };
   } else {
@@ -237,7 +233,6 @@ export default async function handler(req, res) {
       event: EVENT_NAME,
       event_source: EVENT_SOURCE,
       event_source_id: PIXEL_CODE,
-      test_event_code: TEST_EVENT_CODE,
       data: [
         {
           event: EVENT_NAME,
