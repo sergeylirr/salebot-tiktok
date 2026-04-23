@@ -28,6 +28,28 @@ function jsonError(res, status, message, details) {
   res.status(status).json({ error: message, ...(details ? { details } : {}) });
 }
 
+function validateNonEmptyString(value) {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function hashPhoneOrThrow(phone, requestId) {
+  const phoneTrimmed = phone.trim();
+  if (isSha256Hex(phoneTrimmed)) {
+    return phoneTrimmed.toLowerCase();
+  }
+
+  const normalized = normalizePhone(phoneTrimmed);
+  if (normalized.length < 7 || normalized.length > 15) {
+    console.warn(`[tiktok][${requestId}] Invalid phone format`, {
+      length: normalized.length,
+    });
+    const error = new Error("invalid_phone");
+    error.code = "invalid_phone";
+    throw error;
+  }
+  return sha256Hex(normalized);
+}
+
 export default async function handler(req, res) {
   const requestId =
     typeof crypto.randomUUID === "function"
@@ -49,70 +71,129 @@ export default async function handler(req, res) {
     return jsonError(res, 400, "Invalid JSON body; expected an object");
   }
 
-  const phone = req.body.phone;
-  const ttclid = req.body.ttclid;
-  const externalId = req.body.external_id;
+  const eventTime = Math.floor(Date.now() / 1000);
 
-  const validationErrors = {};
+  const body = req.body;
+  let payload;
 
-  if (typeof phone !== "string" || phone.trim().length === 0) {
-    validationErrors.phone = "phone is required and must be a non-empty string";
-  }
+  const isStructured =
+    Array.isArray(body.data) &&
+    validateNonEmptyString(body.event_source) &&
+    validateNonEmptyString(body.event_source_id);
 
-  if (typeof ttclid !== "string" || ttclid.trim().length === 0) {
-    validationErrors.ttclid = "ttclid is required and must be a non-empty string";
-  }
+  if (isStructured) {
+    const validationErrors = {};
 
-  if (typeof externalId !== "string" || externalId.trim().length === 0) {
-    validationErrors.external_id =
-      "external_id is required and must be a non-empty string";
-  }
+    const dataItems = body.data;
+    if (dataItems.length === 0) {
+      validationErrors.data = "data must be a non-empty array";
+    }
 
-  if (Object.keys(validationErrors).length > 0) {
-    console.warn(`[tiktok][${requestId}] Validation failed`, {
-      fields: Object.keys(validationErrors),
-    });
-    return jsonError(res, 400, "Validation error", validationErrors);
-  }
+    const normalizedData = [];
 
-  let phoneHashed;
-  const phoneTrimmed = phone.trim();
+    for (let i = 0; i < dataItems.length; i += 1) {
+      const item = dataItems[i];
+      if (!isPlainObject(item)) {
+        validationErrors[`data[${i}]`] = "each data item must be an object";
+        continue;
+      }
 
-  if (isSha256Hex(phoneTrimmed)) {
-    phoneHashed = phoneTrimmed.toLowerCase();
-  } else {
-    const normalized = normalizePhone(phoneTrimmed);
-    if (normalized.length < 7 || normalized.length > 15) {
-      console.warn(`[tiktok][${requestId}] Invalid phone format`, {
-        length: normalized.length,
+      const user = isPlainObject(item.user) ? { ...item.user } : {};
+
+      if (!validateNonEmptyString(user.external_id)) {
+        validationErrors[`data[${i}].user.external_id`] =
+          "external_id is required and must be a non-empty string";
+      }
+
+      if (typeof user.phone === "string") {
+        try {
+          user.phone = hashPhoneOrThrow(user.phone, requestId);
+        } catch (e) {
+          validationErrors[`data[${i}].user.phone`] =
+            "phone must be a valid phone number or a SHA256 hex hash";
+        }
+      }
+
+      normalizedData.push({
+        ...item,
+        event: validateNonEmptyString(item.event) ? item.event.trim() : EVENT_NAME,
+        event_time: eventTime,
+        user,
       });
+    }
+
+    if (Object.keys(validationErrors).length > 0) {
+      console.warn(`[tiktok][${requestId}] Validation failed`, {
+        fields: Object.keys(validationErrors),
+      });
+      return jsonError(res, 400, "Validation error", validationErrors);
+    }
+
+    payload = {
+      ...(validateNonEmptyString(body.pixel_code) ? { pixel_code: body.pixel_code.trim() } : {}),
+      ...(validateNonEmptyString(body.event) ? { event: body.event.trim() } : {}),
+      event_source: body.event_source.trim(),
+      event_source_id: body.event_source_id.trim(),
+      test_event_code: validateNonEmptyString(body.test_event_code)
+        ? body.test_event_code.trim()
+        : TEST_EVENT_CODE,
+      data: normalizedData,
+    };
+  } else {
+    const phone = body.phone;
+    const ttclid = body.ttclid;
+    const externalId = body.external_id;
+
+    const validationErrors = {};
+
+    if (!validateNonEmptyString(phone)) {
+      validationErrors.phone = "phone is required and must be a non-empty string";
+    }
+
+    if (!validateNonEmptyString(ttclid)) {
+      validationErrors.ttclid = "ttclid is required and must be a non-empty string";
+    }
+
+    if (!validateNonEmptyString(externalId)) {
+      validationErrors.external_id =
+        "external_id is required and must be a non-empty string";
+    }
+
+    if (Object.keys(validationErrors).length > 0) {
+      console.warn(`[tiktok][${requestId}] Validation failed`, {
+        fields: Object.keys(validationErrors),
+      });
+      return jsonError(res, 400, "Validation error", validationErrors);
+    }
+
+    let phoneHashed;
+    try {
+      phoneHashed = hashPhoneOrThrow(phone, requestId);
+    } catch (e) {
       return jsonError(res, 400, "Validation error", {
         phone: "phone must be a valid phone number or a SHA256 hex hash",
       });
     }
-    phoneHashed = sha256Hex(normalized);
-  }
 
-  const eventTime = Math.floor(Date.now() / 1000);
-
-  const payload = {
-    pixel_code: PIXEL_CODE,
-    event: EVENT_NAME,
-    event_source: EVENT_SOURCE,
-    event_source_id: PIXEL_CODE,
-    test_event_code: TEST_EVENT_CODE,
-    data: [
-      {
-        event: EVENT_NAME,
-        event_time: eventTime,
-        user: {
-          phone: phoneHashed,
-          ttclid: ttclid.trim(),
-          external_id: externalId.trim(),
+    payload = {
+      pixel_code: PIXEL_CODE,
+      event: EVENT_NAME,
+      event_source: EVENT_SOURCE,
+      event_source_id: PIXEL_CODE,
+      test_event_code: TEST_EVENT_CODE,
+      data: [
+        {
+          event: EVENT_NAME,
+          event_time: eventTime,
+          user: {
+            phone: phoneHashed,
+            ttclid: ttclid.trim(),
+            external_id: externalId.trim(),
+          },
         },
-      },
-    ],
-  };
+      ],
+    };
+  }
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10000);
