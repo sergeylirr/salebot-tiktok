@@ -123,11 +123,25 @@ export default async function handler(req, res) {
         }
       }
 
+      const pageFromItem = isPlainObject(item.page) ? { ...item.page } : null;
+      const urlCandidate =
+        (pageFromItem && typeof pageFromItem.url === "string" ? pageFromItem.url : null) ||
+        (validateNonEmptyString(item.url) ? item.url : null) ||
+        (validateNonEmptyString(item.page_url) ? item.page_url : null) ||
+        (validateNonEmptyString(item.pageUrl) ? item.pageUrl : null) ||
+        (validateNonEmptyString(user.url) ? user.url : null) ||
+        (validateNonEmptyString(body.url) ? body.url : null) ||
+        (validateNonEmptyString(req.headers.referer) ? req.headers.referer : null);
+
+      const page =
+        validateNonEmptyString(urlCandidate) ? { ...(pageFromItem || {}), url: urlCandidate.trim() } : pageFromItem;
+
       normalizedData.push({
         ...item,
         event: validateNonEmptyString(item.event) ? item.event.trim() : EVENT_NAME,
         event_time: eventTime,
         user,
+        ...(page ? { page } : {}),
       });
     }
 
