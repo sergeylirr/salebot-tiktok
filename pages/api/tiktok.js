@@ -99,6 +99,7 @@ export default async function handler(req, res) {
     pixel_code: PIXEL_CODE,
     event: EVENT_NAME,
     event_source: EVENT_SOURCE,
+    event_source_id: PIXEL_CODE,
     test_event_code: TEST_EVENT_CODE,
     data: [
       {
